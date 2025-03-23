@@ -52,7 +52,7 @@ def evaluate_dataset(fname, period):
     # Get test EIDs
     test_eids = tweet_df_test.eid.tolist()
 
-    print("Processing BERTweet...")
+    print("Processing dataset use BERTweet...")
     bertweet_embs = save_or_load_embeddings(tweet_df_test, device, emb_folder, 'bertweet', period)
 
     # Uncomment if you want BERTweet baseline results
@@ -60,7 +60,7 @@ def evaluate_dataset(fname, period):
     # store_results(period, 'BERTweet', max_ami, max_ari, max_nmi)
 
     print("Processing Our Embeddings...")
-    # Load pre-computed initial features
+    # Load pre-computed initial features 加载bertweet生成的特征
     init_feats_path = f'tweet_features/{period}_bertweet_embs.pt'
     if not os.path.exists(init_feats_path):
         print(f"Error: Initial features not found at {init_feats_path}")

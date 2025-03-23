@@ -1,7 +1,7 @@
 import os
 import random
 import numpy as np
-from datetime import datetime
+from datetime import datetime,timezone
 from tqdm import tqdm
 from collections import defaultdict, Counter
 from itertools import permutations, combinations
@@ -39,13 +39,27 @@ from pdb import set_trace
 
 from sklearn.metrics.cluster import adjusted_rand_score, adjusted_mutual_info_score, normalized_mutual_info_score
 
+# 将发文的时间以2021-12-30为起点，计算时间差 并换算成相差的年数和天数。
 def extract_time_feature(t_str):
-    t = datetime.fromisoformat(str(t_str))
-    OLE_TIME_ZERO = datetime(2021, 12, 30)
+    # t = datetime.fromisoformat(str(t_str))
+    str_value = str(t_str).strip()
+    if str_value.isdigit():
+        # 将时间戳转为秒（处理毫秒/微秒）
+        timestamp = int(str_value) / 1000  # 假设输入是毫秒级
+        # 明确时区为 UTC
+        t = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    else:
+        t = datetime.fromisoformat(str_value)
+        # 无时区时默认添加 UTC 时区
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+    # 以2021-12-30为起点
+    OLE_TIME_ZERO = datetime(2021, 12, 30, tzinfo=timezone.utc)
     delta = t - OLE_TIME_ZERO
     # 86,400 seconds in day
     return [(float(delta.days)/366.), (float(delta.seconds)/86400)]
 
+# 获取tweetebdder的嵌入
 def get_embeddings(
     tweet_df,
     gnn_type = 'gcn', 
@@ -62,6 +76,7 @@ def get_embeddings(
     g = make_dgl_graph(tweet_df, connect_type=connect_type)
 
     # Load initial features from file
+    # 加载使用 BERTweet 模型生成的推文特征（每个推文对应一个特征向量）
     feats_all = torch.load(init_feat_fname)
 
     # extract time feature
@@ -70,18 +85,19 @@ def get_embeddings(
         time_feats = np.array(tweet_df['time_feats'].tolist())
         time_feats = time_feats.astype(np.float32)
         time_feats = torch.tensor(time_feats)
+        #讲时间特征拼接到原始特征中
         feats_all = torch.cat([feats_all, time_feats], dim=1)
     
     if hop==1:
         sampler = dgl.dataloading.MultiLayerFullNeighborSampler(hop)
     elif hop==2:
         sampler = dgl.dataloading.MultiLayerFullNeighborSampler(hop)
-
+    # 将节点特征 feats_all 存储到图对象 g 的节点数据（ndata）中，键名为 'f'。
     g.ndata['f'] = feats_all
 
     test_indices = [i for i in range(tweet_df.shape[0])]
 
-    # Hyper-parameters
+    # Hyper-parameters batch_size
     bs = 256 
 
     test_dataloader = dgl.dataloading.DataLoader(
@@ -90,7 +106,7 @@ def get_embeddings(
         shuffle=False,
         drop_last=False,
         num_workers=0)
-        
+    # in_dim=feats_all.shape[1]  输入的数据维度 
     model = TweetEmbedder(
         in_dim=feats_all.shape[1], h1_dim=256, h2_dim=64, 
         com_proj_dim=64, proj_t1_dim=64, proj_t2_dim=64, 
@@ -174,11 +190,11 @@ def extract_pairwise(indices, eids, sample_num=1000):
         n2_list.append(n2)
 
     return (p1_list, p2_list, n1_list, n2_list), pn_pairs
-
-def find_best_eps(eps, test_embeddings, test_eids):
+# 寻找邻域范围的最佳值
+def find_best_eps(eps, test_embeddings, test_eids,_min_samples=3):
     ami_list, ari_list, nmi_list = [], [], []
     for eps_ in range(eps-5, eps+5):
-        db = DBSCAN(eps=eps_, min_samples=3).fit(test_embeddings)
+        db = DBSCAN(eps=eps_, min_samples=_min_samples).fit(test_embeddings)
         ami_score, ari_score, nmi_score = get_clustering_scores(np.array(test_eids), db.labels_, digit=5)
         ami_list.append((eps_, ami_score))
         ari_list.append((eps_, ari_score))
@@ -189,6 +205,7 @@ def find_best_eps(eps, test_embeddings, test_eids):
     max_idx = nmi_list.index(max_tuple)
     return max_eps, (ami_list[max_idx][1], ari_list[max_idx][1], nmi_list[max_idx][1]), (ami_list, ari_list, nmi_list)
 
+#三元组损失函数 用于训练模型用
 def extract_apn(indices, eids):
 
     eid2indices = defaultdict(list)
@@ -345,6 +362,7 @@ def print_cluster(
 
             if i == (print_num-1): break
 
+# 根据connect_type对tweet_df中的文本进行连接，构建图。只是将图中不同的点连起来了 并没有边和节点的数据
 def make_dgl_graph(tweet_df, connect_type):
     if connect_type=='noun':
         connect_elems = tweet_df.nouns.tolist()
@@ -353,7 +371,8 @@ def make_dgl_graph(tweet_df, connect_type):
     elif connect_type=='entites': 
         connect_elems = tweet_df.entities.tolist()
     elif connect_type=='promptNER':
-        connect_elems = tweet_df['promptNER entities'].tolist()
+        #使用promptNER提取出来的实体进行连接
+        connect_elems = tweet_df['promptNER entities'].tolist() 
     else:
         logging.info(f"no such connect type: {connect_type}")
     num_tweets = tweet_df.shape[0]

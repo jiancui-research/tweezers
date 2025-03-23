@@ -69,14 +69,6 @@ def clean_hashtag(text):
 
     return text
 
-def clean_mention(text):
-    while 1:
-        m = re.search(_RE_MENTION, text)
-        if m == None:
-            break
-        text = text[:m.start()] + text[m.start()+1:]
-
-    return text
 
 def clean_mention(text):
     while 1:
